@@ -57,6 +57,7 @@
         <h1 id="lessonHeading">What did you do yesterday?</h1>
         <p class="lesson-korean" id="lessonKorean">어제 무엇을 했나요?</p>
         <div class="listen-row"><button type="button" id="listenButton" class="outline-pill"><span aria-hidden="true">◖))</span> 질문 듣기</button><button type="button" id="hintButton" class="outline-pill secondary-pill">✧ 힌트 보기</button></div>
+        <p id="audioStatus" role="status" aria-live="polite" style="font-size:12px;color:#526c56;margin:-10px 0 18px;min-height:18px">🔊 듣기를 누르면 영어 질문을 읽어줘요.</p>
         <div class="hint-box" id="hintBox" hidden><span class="hint-label">USEFUL EXPRESSIONS</span><p id="hintContent"></p><small id="hintExample"></small></div>
         <div class="answer-panel"><div class="answer-title"><h2>영어로 대답해 보세요</h2><span>YOUR TURN</span></div><div class="mic-zone"><button type="button" id="micButton" class="mic-button" aria-label="마이크로 영어 답변하기"><svg width="29" height="29" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="13" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v5M8 22h8"/></svg></button><p id="micStatus">마이크를 눌러 영어로 말해보세요</p><span id="micSupport" class="muted-small">음성 인식이 안 되면 아래에 입력해도 돼요.</span></div><label for="answerInput" class="input-label">또는 직접 입력하기</label><textarea id="answerInput" rows="3" placeholder="e.g. Yesterday, I ate chicken outside." spellcheck="true" autocapitalize="sentences" enterkeyhint="done"></textarea><div class="answer-actions"><button id="skipQuestion" class="ghost-button" type="button">다른 질문</button><button id="submitAnswer" class="primary-button" type="button">답변 확인 <span>→</span></button></div></div>
         <div class="feedback-panel" id="feedbackPanel" hidden aria-live="polite"><span class="feedback-kicker" id="feedbackKicker">NICE TRY ✨</span><h3 id="feedbackTitle">의미 전달이 잘 됐어요!</h3><p id="feedbackText"></p><div class="feedback-model" id="feedbackModel" hidden><span>MORE NATURAL</span><p id="feedbackSuggested"></p><button id="listenSuggestion" type="button" aria-label="추천 문장 듣기">◖))</button></div><button class="primary-button wide" type="button" id="nextQuestion">다음 질문 <span>→</span></button></div>
@@ -210,6 +211,9 @@ let lastSave=0;
 let answered=false;
 let speaking=false;
 let recognition=null;
+let currentUtterance=null;
+let voiceSequence=0;
+let audioWatchdog=null;
 let pendingInstall=null;
 let toastTimer;
 let localDay=todayKey();
@@ -244,7 +248,7 @@ function goTo(tab){
     if(isCurrent)el.setAttribute('aria-current','page');else el.removeAttribute('aria-current');
   });
   if(tab==='lesson')startLesson();
-  else {if(tab==='review')renderHistory();sessionActive=false;stopRecognition();if(window.speechSynthesis)window.speechSynthesis.cancel();}
+  else {if(tab==='review')renderHistory();sessionActive=false;stopRecognition();stopSpeech();}
   updateUI();window.scrollTo({top:0,behavior:'instant'});
 }
 function markActivity(){lastEngagement=Date.now();}
@@ -269,6 +273,7 @@ function renderCourses(){
   });
 }
 function renderQuestion(){
+  stopSpeech();
   const m=getModule(),q=currentQuestion();answered=false;
   $('lessonPosition').textContent=`QUESTION ${String(currentPosition()+1).padStart(2,'0')} / ${String(m.questions.length).padStart(2,'0')}`;
   $('lessonTimelineFill').style.width=`${(currentPosition()+1)/m.questions.length*100}%`;
@@ -281,9 +286,10 @@ function renderQuestion(){
   $('hintBox').hidden=true;
   $('feedbackPanel').hidden=true;
   $('submitAnswer').disabled=false;
-  $('micStatus').textContent=recognizedSpeech?'마이크를 눌러 영어로 말해보세요':'직접 입력해서 영어를 연습해 보세요';
-  $('micSupport').textContent=recognizedSpeech?'음성 인식이 안 되면 아래에 입력해도 돼요.':'이 브라우저에서는 음성 받아쓰기를 지원하지 않아요.';
-  $('micButton').disabled=!recognizedSpeech;
+  $('micStatus').textContent=recognizedSpeech?'마이크를 눌러 영어로 말해보세요':'답변란을 누르고 휴대폰 키보드의 마이크로 말해보세요.';
+  $('micSupport').textContent=recognizedSpeech?'말하기가 안 되면 Safari에서 열거나 키보드 받아쓰기를 이용하세요.':'브라우저 음성 인식을 지원하지 않아요. 키보드의 마이크 버튼을 이용할 수 있어요.';
+  $('micButton').disabled=false;
+  $('audioStatus').textContent='🔊 질문 듣기를 누르면 음성이 재생돼요.';
   $('activeStatus').textContent='질문을 듣고 영어로 대답해 보세요';
 }
 function replacePatterns(answer){
@@ -348,14 +354,24 @@ function nextQuestion(){
   if(state.settings.autoSpeak)playSpeech(currentQuestion().en);
   window.scrollTo({top:0,behavior:'smooth'});
 }
-function stopRecognition(){if(recognition){try{recognition.abort()}catch{} recognition=null; }$('micButton').classList.remove('listening');speaking=false;}
+function stopRecognition(){
+  if(recognition){try{recognition.abort()}catch{} recognition=null;}
+  $('micButton').classList.remove('listening');speaking=false;
+}
+function useKeyboardDictation(message){
+  $('micStatus').textContent=message || '답변 칸을 누른 뒤 휴대폰 키보드의 마이크를 사용하세요.';
+  $('micSupport').textContent='Safari에서 열고 마이크 권한을 허용하거나 휴대폰 키보드의 받아쓰기를 이용하세요.';
+  $('answerInput').focus();
+}
 function microphone(){
-  if(!recognizedSpeech){showToast('이 브라우저는 받아쓰기를 지원하지 않아요. 직접 입력해 주세요.');return;}
-  if(speaking){stopRecognition();$('micStatus').textContent='말하기를 중지했어요';return;}
+  markActivity();
+  if(!recognizedSpeech){useKeyboardDictation('이 브라우저에서는 자동 음성 인식이 지원되지 않아요. 키보드 마이크를 이용해 주세요.');return;}
+  if(speaking){stopRecognition();$('micStatus').textContent='말하기를 중지했어요.';return;}
   try{
+    stopSpeech();
     const instance=new recognizedSpeech();recognition=instance;
     instance.lang='en-US';instance.interimResults=true;instance.continuous=false;instance.maxAlternatives=1;
-    let finalTranscript='';
+    let finalTranscript='',hadError=false,hasWords=false;
     instance.onstart=()=>{speaking=true;markActivity();$('micButton').classList.add('listening');$('micStatus').textContent='듣고 있어요. 영어로 천천히 말해보세요.';};
     instance.onresult=e=>{
       let interim='';
@@ -364,23 +380,79 @@ function microphone(){
         if(e.results[i].isFinal)finalTranscript+=(finalTranscript?' ':'')+text;
         else interim+=text;
       }
-      $('answerInput').value=(finalTranscript+' '+interim).trim();
-      markActivity();
-      if(finalTranscript){$('micStatus').textContent='좋아요! 아래 답변을 확인해 보세요.';}
+      const transcript=(finalTranscript+' '+interim).trim();
+      if(transcript){hasWords=true;$('answerInput').value=transcript;markActivity();}
+      if(finalTranscript)$('micStatus').textContent='좋아요! 아래 답변을 확인해 보세요.';
     };
-    instance.onerror=e=>{$('micStatus').textContent=(e.error==='not-allowed'||e.error==='service-not-allowed')?'마이크 권한을 확인하거나 직접 입력해 주세요.':'음성 인식에 문제가 있어요. 직접 입력해 주세요.';};
-    instance.onend=()=>{speaking=false;$('micButton').classList.remove('listening');recognition=null;};
+    instance.onerror=e=>{
+      hadError=true;
+      const reason=e?.error||'unknown';
+      if(reason==='not-allowed'||reason==='service-not-allowed')useKeyboardDictation('마이크 접근이 거부됐어요. Safari의 마이크 권한을 확인하세요.');
+      else if(reason==='network')useKeyboardDictation('음성 인식 서비스에 연결할 수 없어요. 키보드 받아쓰기를 이용해 주세요.');
+      else if(reason==='no-speech')$('micStatus').textContent='목소리가 들리지 않았어요. 마이크를 다시 눌러주세요.';
+      else useKeyboardDictation('음성 인식에 문제가 생겼어요. 키보드 마이크를 이용해 주세요.');
+    };
+    instance.onend=()=>{
+      speaking=false;$('micButton').classList.remove('listening');recognition=null;
+      if(!hadError&&!hasWords)$('micStatus').textContent='음성이 인식되지 않았어요. 다시 눌러 말해보세요.';
+    };
     instance.start();
-  }catch{showToast('음성 인식을 시작하지 못했어요. 직접 입력해 주세요.');stopRecognition();}
+  }catch{stopRecognition();useKeyboardDictation('음성 인식을 시작할 수 없어요. 키보드의 마이크를 이용해 주세요.');}
+}
+function stopSpeech(){
+  voiceSequence++;
+  if(audioWatchdog){clearTimeout(audioWatchdog);audioWatchdog=null;}
+  try{if(window.speechSynthesis&&(currentUtterance||window.speechSynthesis.speaking||window.speechSynthesis.pending))window.speechSynthesis.cancel();}catch{}
+  currentUtterance=null;
+  $('listenButton').textContent='◖)) 질문 듣기';
 }
 function playSpeech(english){
-  if(!('speechSynthesis' in window)){showToast('이 브라우저에서는 음성 재생을 지원하지 않아요.');return;}
-  window.speechSynthesis.cancel();
-  const u=new SpeechSynthesisUtterance(english);u.lang='en-US';u.rate=state.settings.level==='A1'?.82:.91;u.pitch=1;
-  const voices=window.speechSynthesis.getVoices();
-  const voice=voices.find(v=>v.lang.toLowerCase().startsWith('en-us'))||voices.find(v=>v.lang.toLowerCase().startsWith('en'));
-  if(voice)u.voice=voice;
-  window.speechSynthesis.speak(u);markActivity();
+  markActivity();
+  if(!('speechSynthesis' in window)||!('SpeechSynthesisUtterance' in window)){
+    $('audioStatus').textContent='이 브라우저는 음성 재생을 지원하지 않아요. iPhone Safari에서 링크를 직접 열어보세요.';
+    return;
+  }
+  if(currentUtterance && window.speechSynthesis.speaking){
+    stopSpeech();$('audioStatus').textContent='⏹ 재생을 중지했어요.';return;
+  }
+  stopSpeech();
+  const sequence=voiceSequence;
+  const synth=window.speechSynthesis;
+  let began=false;
+  try{
+    const utterance=new SpeechSynthesisUtterance(String(english||''));
+    currentUtterance=utterance;
+    utterance.lang='en-US';utterance.rate=state.settings.level==='A1'?.82:.91;utterance.pitch=1;utterance.volume=1;
+    const voices=synth.getVoices();
+    const voice=voices.find(v=>(v.lang||'').toLowerCase().startsWith('en-us'))||voices.find(v=>(v.lang||'').toLowerCase().startsWith('en'));
+    if(voice)utterance.voice=voice;
+    utterance.onstart=()=>{
+      if(sequence!==voiceSequence)return;
+      began=true;$('audioStatus').textContent='🔊 영어 질문을 읽고 있어요.';
+      $('listenButton').textContent='■ 재생 중지';
+    };
+    utterance.onend=()=>{
+      if(sequence!==voiceSequence)return;
+      currentUtterance=null;$('listenButton').textContent='◖)) 다시 듣기';
+      $('audioStatus').textContent='✅ 듣기 완료. 한 번 더 듣고 싶으면 다시 눌러주세요.';
+    };
+    utterance.onerror=e=>{
+      if(sequence!==voiceSequence)return;
+      currentUtterance=null;$('listenButton').textContent='◖)) 다시 듣기';
+      if(e?.error==='interrupted'||e?.error==='canceled')return;
+      $('audioStatus').textContent='음성 재생이 실패했어요. Safari에서 열고 기기 볼륨을 확인한 뒤 다시 눌러주세요.';
+    };
+    $('audioStatus').textContent='🔊 음성 재생을 준비하고 있어요…';
+    synth.speak(utterance);
+    audioWatchdog=setTimeout(()=>{
+      if(sequence!==voiceSequence||began)return;
+      if(!synth.speaking){$('audioStatus').textContent='음성이 시작되지 않았어요. 다시 눌러보거나 Safari에서 열고 볼륨을 확인하세요.';}
+    },3000);
+  }catch{
+    currentUtterance=null;
+    $('listenButton').textContent='◖)) 다시 듣기';
+    $('audioStatus').textContent='음성 재생을 시작할 수 없어요. Safari에서 직접 열어주세요.';
+  }
 }
 function renderHistory(){
   const el=$('answerHistory');el.replaceChildren();
@@ -474,7 +546,7 @@ function wireEvents(){
   $('exportButton').addEventListener('click',exportData);
   $('importButton').addEventListener('click',()=>$('importFile').click());
   $('importFile').addEventListener('change',e=>{importData(e.target.files[0]);e.target.value='';});
-  document.addEventListener('visibilitychange',()=>{tickAt=Date.now();save();if(document.visibilityState!=='visible'){stopRecognition();sessionActive=false;}updateUI();});
+  document.addEventListener('visibilitychange',()=>{tickAt=Date.now();save();if(document.visibilityState!=='visible'){stopRecognition();stopSpeech();sessionActive=false;}updateUI();});
   window.addEventListener('pagehide',save);
   window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();pendingInstall=e;$('installButton').hidden=false;});
   $('installButton').addEventListener('click',async()=>{if(!pendingInstall)return;pendingInstall.prompt();await pendingInstall.userChoice;pendingInstall=null;$('installButton').hidden=true;});
