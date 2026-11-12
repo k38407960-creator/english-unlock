@@ -1,0 +1,20 @@
+{
+  "name": "English Unlock — Daily English",
+  "short_name": "English Unlock",
+  "description": "Daily English speaking practice, 60 minute learning goal",
+  "id": "./",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f7f5f0",
+  "theme_color": "#253f34",
+  "lang": "ko",
+  "icons": [
+    {
+      "src": "./icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
